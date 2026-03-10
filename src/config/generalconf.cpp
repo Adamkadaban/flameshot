@@ -46,6 +46,7 @@ GeneralConf::GeneralConf(QWidget* parent)
     initShowQuitPrompt();
     initAllowMultipleGuiInstances();
     initSaveLastRegion();
+    initAutoSelectMonitor();
     initShowHelp();
     initShowSidePanelButton();
     initUseJpgForClipboard();
@@ -104,6 +105,7 @@ void GeneralConf::_updateComponents(bool allowEmptySavePath)
     m_showMagnifier->setChecked(config.showMagnifier());
     m_squareMagnifier->setChecked(config.squareMagnifier());
     m_saveLastRegion->setChecked(config.saveLastRegion());
+    m_autoSelectMonitor->setChecked(config.autoSelectMonitor());
     m_reverseArrow->setChecked(config.reverseArrow());
 
 #if !defined(Q_OS_WIN)
@@ -133,6 +135,11 @@ void GeneralConf::updateComponents()
 void GeneralConf::saveLastRegion(bool checked)
 {
     ConfigHandler().setSaveLastRegion(checked);
+}
+
+void GeneralConf::autoSelectMonitorChanged(bool checked)
+{
+    ConfigHandler().setAutoSelectMonitor(checked);
 }
 
 void GeneralConf::showHelpChanged(bool checked)
@@ -281,6 +288,21 @@ void GeneralConf::initSaveLastRegion()
             &QCheckBox::clicked,
             this,
             &GeneralConf::saveLastRegion);
+}
+
+void GeneralConf::initAutoSelectMonitor()
+{
+    m_autoSelectMonitor =
+      new QCheckBox(tr("Auto select monitor on multi-screen"), this);
+    m_autoSelectMonitor->setToolTip(
+      tr("Automatically select the monitor where the cursor is when taking a "
+         "screenshot, instead of showing the monitor selection dialog"));
+    m_scrollAreaLayout->addWidget(m_autoSelectMonitor);
+
+    connect(m_autoSelectMonitor,
+            &QCheckBox::clicked,
+            this,
+            &GeneralConf::autoSelectMonitorChanged);
 }
 
 void GeneralConf::initShowSidePanelButton()

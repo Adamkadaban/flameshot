@@ -27,7 +27,9 @@ public:
     QRect logicalDesktopGeometry();
     int getSelectedMonitor() const { return m_selectedMonitor; }
     QScreen* getSelectedScreen() const;
-    QPixmap selectMonitorAndCrop(const QPixmap& fullScreenshot, bool& ok);
+    QPixmap selectMonitorAndCrop(const QPixmap& fullScreenshot,
+                                 bool& ok,
+                                 const QPoint& cursorPos);
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
