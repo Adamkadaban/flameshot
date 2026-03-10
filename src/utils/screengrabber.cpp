@@ -7,6 +7,7 @@
 #include "src/utils/filenamehandler.h"
 #include "src/utils/systemnotification.h"
 #include <QApplication>
+#include <QCursor>
 #include <QEventLoop>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -33,9 +34,95 @@
 #include <QDir>
 #include <QUrl>
 #include <QUuid>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+// Xlib #defines conflict with Qt (KeyPress, KeyRelease, etc.)
+#undef KeyPress
+#undef KeyRelease
+#undef FocusIn
+#undef FocusOut
+#undef None
+#undef Status
+#undef Bool
 #endif
 
 bool ScreenGrabber::m_monitorSelectionActive = false;
+
+// On Wayland, QCursor::pos() returns (0,0) because applications cannot
+// query global cursor position. As a workaround, we use Xlib to query
+// the cursor position via XWayland. Mutter only syncs the Wayland cursor
+// to XWayland when an XWayland surface has pointer focus, so we briefly
+// map a fullscreen transparent window and grab the pointer to force an
+// immediate sync, then read the position and clean up.
+static QPoint getWaylandCursorPosition()
+{
+#if !(defined(Q_OS_MACOS) || defined(Q_OS_WIN))
+    Display* dpy = XOpenDisplay(nullptr);
+    if (!dpy) {
+        return QPoint(-1, -1);
+    }
+
+    int screen = DefaultScreen(dpy);
+    Window root = RootWindow(dpy, screen);
+    int sw = DisplayWidth(dpy, screen);
+    int sh = DisplayHeight(dpy, screen);
+
+    // Create a fullscreen transparent override-redirect window
+    XSetWindowAttributes attrs;
+    attrs.override_redirect = True;
+    attrs.event_mask = PointerMotionMask;
+
+    Window syncWin;
+    XVisualInfo vinfo;
+    if (XMatchVisualInfo(dpy, screen, 32, TrueColor, &vinfo)) {
+        attrs.colormap =
+          XCreateColormap(dpy, root, vinfo.visual, AllocNone);
+        attrs.background_pixel = 0; // fully transparent
+        attrs.border_pixel = 0;
+        syncWin = XCreateWindow(dpy, root, 0, 0, sw, sh, 0,
+                                vinfo.depth, InputOutput, vinfo.visual,
+                                CWOverrideRedirect | CWColormap |
+                                  CWBackPixel | CWBorderPixel |
+                                  CWEventMask,
+                                &attrs);
+    } else {
+        attrs.background_pixel = 0;
+        syncWin = XCreateWindow(dpy, root, 0, 0, sw, sh, 0,
+                                CopyFromParent, InputOutput,
+                                CopyFromParent,
+                                CWOverrideRedirect | CWBackPixel |
+                                  CWEventMask,
+                                &attrs);
+    }
+
+    XMapRaised(dpy, syncWin);
+
+    // Grab the pointer to force the compositor to sync cursor position
+    // into XWayland immediately. cursor=0 (None) means keep current cursor.
+    XGrabPointer(dpy, syncWin, True, PointerMotionMask | ButtonPressMask,
+                 GrabModeAsync, GrabModeAsync, syncWin, 0, CurrentTime);
+    XFlush(dpy);
+
+    // Brief pause to ensure the compositor processes the grab
+    struct timespec ts = { 0, 50000000 }; // 50ms
+    nanosleep(&ts, nullptr);
+
+    XUngrabPointer(dpy, CurrentTime);
+
+    Window child;
+    int rootX, rootY, winX, winY;
+    unsigned int mask;
+    int ok = XQueryPointer(
+      dpy, syncWin, &root, &child, &rootX, &rootY, &winX, &winY, &mask);
+
+    XDestroyWindow(dpy, syncWin);
+    XCloseDisplay(dpy);
+
+    return ok ? QPoint(rootX, rootY) : QPoint(-1, -1);
+#else
+    return QPoint(-1, -1);
+#endif
+}
 
 ScreenGrabber::ScreenGrabber(QObject* parent)
   : QObject(parent)
@@ -138,7 +225,8 @@ void ScreenGrabber::freeDesktopPortal(bool& ok, QPixmap& res)
 }
 
 QPixmap ScreenGrabber::selectMonitorAndCrop(const QPixmap& fullScreenshot,
-                                            bool& ok)
+                                            bool& ok,
+                                            const QPoint& cursorPos)
 {
     ok = true;
 #if defined(Q_OS_MACOS)
@@ -150,6 +238,48 @@ QPixmap ScreenGrabber::selectMonitorAndCrop(const QPixmap& fullScreenshot,
     const QList<QScreen*> screens = QGuiApplication::screens();
     if (screens.size() == 1) {
         return cropToMonitor(fullScreenshot, 0);
+    }
+
+    // Auto-select the monitor that the cursor is currently on
+    if (ConfigHandler().autoSelectMonitor()) {
+        QScreen* cursorScreen = nullptr;
+
+        // On Wayland, getWaylandCursorPosition() returns XWayland
+        // coordinates which use a unified physical pixel space scaled
+        // by the highest DPR. Convert Qt's logical screen geometries
+        // to the same space for hit-testing.
+        if (cursorPos != QPoint(0, 0)) {
+            qreal maxDpr = 1.0;
+            for (QScreen* s : screens) {
+                maxDpr = qMax(maxDpr, s->devicePixelRatio());
+            }
+            for (QScreen* s : screens) {
+                QRect logGeom = s->geometry();
+                QRect xwGeom(
+                  qRound(logGeom.x() * maxDpr),
+                  qRound(logGeom.y() * maxDpr),
+                  qRound(logGeom.width() * maxDpr),
+                  qRound(logGeom.height() * maxDpr));
+                if (xwGeom.contains(cursorPos)) {
+                    cursorScreen = s;
+                    break;
+                }
+            }
+        }
+
+        // Fallback: try logical coordinates directly (works on X11)
+        if (!cursorScreen) {
+            cursorScreen =
+              QGuiAppCurrentScreen().currentScreen(cursorPos);
+        }
+
+        if (cursorScreen) {
+            int cursorMonitorIndex = screens.indexOf(cursorScreen);
+            if (cursorMonitorIndex >= 0) {
+                m_selectedMonitor = cursorMonitorIndex;
+                return cropToMonitor(fullScreenshot, cursorMonitorIndex);
+            }
+        }
     }
 
     if (m_monitorSelectionActive) {
@@ -192,6 +322,18 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
     int wid = 0;
     QPixmap screenshot;
 
+    // Save cursor position before any portal/system calls that may
+    // disrupt it (e.g. FreeDesktop portal dialog stealing focus).
+    // On Wayland, QCursor::pos() returns (0,0) -- in that case,
+    // query the real cursor position via XWayland.
+    QPoint cursorPos = QCursor::pos();
+    if (cursorPos == QPoint(0, 0) && QGuiApplication::screens().size() > 1) {
+        QPoint waylandPos = getWaylandCursorPosition();
+        if (waylandPos != QPoint(-1, -1)) {
+            cursorPos = waylandPos;
+        }
+    }
+
 #if defined(Q_OS_MACOS)
     QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
     if (!currentScreen) {
@@ -225,7 +367,7 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
         }
     }
 
-    return selectMonitorAndCrop(screenshot, ok);
+    return selectMonitorAndCrop(screenshot, ok, cursorPos);
 }
 
 QPixmap ScreenGrabber::grabFullDesktop(bool& ok)

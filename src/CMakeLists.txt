@@ -17,6 +17,9 @@ find_package(
         REQUIRED
         DBus
 )
+if (NOT APPLE)
+find_package(X11 REQUIRED)
+endif()
 endif()
 
 if (USE_WAYLAND_CLIPBOARD)
@@ -233,6 +236,12 @@ target_link_libraries(
         flameshot
         Qt${QT_VERSION_MAJOR}::DBus
 )
+if (NOT APPLE)
+target_link_libraries(
+        flameshot
+        X11
+)
+endif()
 endif()
 
 if (USE_KDSINGLEAPPLICATION)
