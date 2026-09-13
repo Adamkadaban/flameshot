@@ -2,7 +2,32 @@
 
 #include "portalimage.h"
 
+#include <QImageReader>
+#include <QPromise>
+#include <QThreadPool>
 #include <QtMath>
+#include <memory>
+
+PortalImage::ReadResult PortalImage::read(const QString& path)
+{
+    QImageReader reader(path);
+    QImage image = reader.read();
+    QString error = image.isNull() ? reader.errorString() : QString();
+    return { std::move(image), error };
+}
+
+QFuture<PortalImage::ReadResult> PortalImage::readAsync(const QString& path)
+{
+    // Decode QImage off-thread; callers create QPixmap on the GUI thread.
+    auto promise = std::make_shared<QPromise<ReadResult>>();
+    promise->start();
+    auto future = promise->future();
+    QThreadPool::globalInstance()->start([promise, path] {
+        promise->addResult(read(path));
+        promise->finish();
+    });
+    return future;
+}
 
 std::optional<PortalImage::Mapping> PortalImage::mapScreen(
   const QSize& imageSize,

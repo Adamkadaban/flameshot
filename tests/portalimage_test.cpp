@@ -4,6 +4,7 @@
 
 #include <QImage>
 #include <QPainter>
+#include <QTemporaryDir>
 #include <QtTest>
 
 class PortalImageTest : public QObject
@@ -11,6 +12,46 @@ class PortalImageTest : public QObject
     Q_OBJECT
 
 private slots:
+    void readImage_data()
+    {
+        QTest::addColumn<bool>("asynchronous");
+        QTest::newRow("synchronous") << false;
+        QTest::newRow("asynchronous") << true;
+    }
+
+    void readImage()
+    {
+        QFETCH(bool, asynchronous);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath("capture.png");
+        QImage source(80, 60, QImage::Format_ARGB32);
+        source.fill(QColor(12, 34, 56, 128));
+        source.setPixelColor(20, 30, Qt::red);
+        QVERIFY(source.save(path, "PNG"));
+        auto result = asynchronous ? PortalImage::readAsync(path).takeResult()
+                                   : PortalImage::read(path);
+        QVERIFY2(!result.image.isNull(), qPrintable(result.error));
+        QVERIFY(result.error.isEmpty());
+        QCOMPARE(result.image.size(), source.size());
+        QCOMPARE(result.image.pixelColor(0, 0), source.pixelColor(0, 0));
+        QCOMPARE(result.image.pixelColor(20, 30), source.pixelColor(20, 30));
+    }
+
+    void reportReadFailure_data() { readImage_data(); }
+
+    void reportReadFailure()
+    {
+        QFETCH(bool, asynchronous);
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = directory.filePath("missing.png");
+        auto result = asynchronous ? PortalImage::readAsync(path).takeResult()
+                                   : PortalImage::read(path);
+        QVERIFY(result.image.isNull());
+        QVERIFY(!result.error.isEmpty());
+    }
+
     void screenMapping_data()
     {
         QTest::addColumn<QSize>("image");
@@ -31,6 +72,10 @@ private slots:
           << QSize(7680, 2160) << QRect(-1920, -1080, 3840, 1080)
           << QRect(-1920, -1080, 1920, 1080) << QRect(0, 0, 3840, 2160)
           << qreal(2);
+        QTest::newRow("positive-origin")
+          << QSize(2400, 1200) << QRect(1000, 500, 1600, 800)
+          << QRect(1800, 500, 800, 800) << QRect(1200, 0, 1200, 1200)
+          << qreal(1.5);
         QTest::newRow("portrait")
           << QSize(1080, 1920) << QRect(0, 0, 720, 1280)
           << QRect(0, 0, 720, 1280) << QRect(0, 0, 1080, 1920) << qreal(1.5);

@@ -67,6 +67,7 @@ constexpr const char* visibleInDockProperty = "_visibleInDock";
 #include <QDesktopServices>
 #include <QFile>
 #include <QMessageBox>
+#include <QScopedValueRollback>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
@@ -78,6 +79,7 @@ constexpr const char* visibleInDockProperty = "_visibleInDock";
 
 Flameshot::Flameshot()
   : m_haveExternalWidget(false)
+  , m_captureInProgress(false)
   , m_captureWindow(nullptr)
 #if (defined(Q_OS_MACOS) || defined(Q_OS_WIN))
   , m_HotkeyScreenshotCapture(nullptr)
@@ -145,7 +147,10 @@ CaptureWidget* Flameshot::gui(const CaptureRequest& req)
     }
 #endif
 
-    if (nullptr == m_captureWindow) {
+    if (nullptr == m_captureWindow && !m_captureInProgress) {
+        // CaptureWidget runs nested event loops before m_captureWindow is
+        // assigned.
+        const QScopedValueRollback<bool> capturing(m_captureInProgress, true);
         // TODO is this unnecessary now?
         int timeout = 5000; // 5 seconds
         const int delay = 100;

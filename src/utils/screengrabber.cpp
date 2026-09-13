@@ -18,6 +18,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
+#include <QPointer>
 #include <QProcess>
 #include <QScreen>
 #include <QTimer>
@@ -38,6 +39,13 @@
 #include <QUuid>
 #endif
 
+namespace {
+bool usesWaylandPlatform()
+{
+    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"));
+}
+}
+
 bool ScreenGrabber::m_monitorSelectionActive = false;
 
 ScreenGrabber::ScreenGrabber(QObject* parent)
@@ -55,7 +63,8 @@ ScreenGrabber::ScreenGrabber(QObject* parent)
 
 ScreenGrabber::PortalStatus ScreenGrabber::freeDesktopPortal(
   QPixmap& res,
-  QString& errorDetail)
+  QString& errorDetail,
+  const std::function<void()>& afterCapture)
 {
 
 #if !(defined(Q_OS_MACOS) || defined(Q_OS_WIN))
@@ -88,26 +97,41 @@ ScreenGrabber::PortalStatus ScreenGrabber::freeDesktopPortal(
       this);
 
     QEventLoop loop;
+    QTimer timeout;
 
-    const auto onPortalResponse = [&res, &loop, this](uint status,
-                                                      const QVariantMap& map) {
-        if (status == 0) {
-            // Parse this as URI to handle unicode properly
-            QUrl uri = map.value("uri").toString();
-            QString uriString = uri.toLocalFile();
-            res = QPixmap(uriString);
-            QFile imgFile(uriString);
-            imgFile.remove();
-        }
-        loop.quit();
-    };
+    const auto onPortalResponse =
+      [&res, &loop, &timeout, &errorDetail, &afterCapture](
+        uint status, const QVariantMap& map) {
+          timeout.stop();
+          if (status == 0) {
+              // Parse this as URI to handle unicode properly
+              QUrl uri = map.value("uri").toString();
+              QString uriString = uri.toLocalFile();
+              PortalImage::ReadResult result;
+              if (afterCapture) {
+                  auto pending = PortalImage::readAsync(uriString);
+                  afterCapture();
+                  result = pending.takeResult();
+              } else {
+                  result = PortalImage::read(uriString);
+              }
+              if (result.image.isNull()) {
+                  errorDetail = tr("Unable to read the portal screenshot: %1")
+                                  .arg(result.error);
+              } else {
+                  res = QPixmap::fromImage(std::move(result.image));
+              }
+              QFile imgFile(uriString);
+              imgFile.remove();
+          }
+          loop.quit();
+      };
 
     // prevent racy situations and listen before calling screenshot
     QMetaObject::Connection conn = QObject::connect(
       request, &org::freedesktop::portal::Request::Response, onPortalResponse);
 
     bool timedOut = false;
-    QTimer timeout;
     timeout.setSingleShot(true);
     timeout.setInterval(15000); // 15 second timeout
 
@@ -126,12 +150,12 @@ ScreenGrabber::PortalStatus ScreenGrabber::freeDesktopPortal(
     // proceeds, instead of rejecting outright).
     QString parentWindow;
     QWidget parentDummy;
-    parentDummy.setAttribute(Qt::WA_DontShowOnScreen, true);
-    parentDummy.resize(1, 1);
-    parentDummy.show();
-    if (QGuiApplication::platformName() == QLatin1String("wayland")) {
+    if (usesWaylandPlatform()) {
         parentWindow = QStringLiteral("wayland:");
     } else {
+        parentDummy.setAttribute(Qt::WA_DontShowOnScreen, true);
+        parentDummy.resize(1, 1);
+        parentDummy.show();
         parentWindow =
           QStringLiteral("x11:0x%1").arg(parentDummy.winId(), 0, 16);
     }
@@ -184,11 +208,13 @@ ScreenGrabber::PortalStatus ScreenGrabber::freeDesktopPortal(
 #else
     Q_UNUSED(res)
     Q_UNUSED(errorDetail)
+    Q_UNUSED(afterCapture)
     return PortalStatus::Failed;
 #endif
 }
 
-QPixmap ScreenGrabber::unixScreenshot(bool& ok)
+QPixmap ScreenGrabber::unixScreenshot(bool& ok,
+                                      const std::function<void()>& afterCapture)
 {
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
     QPixmap screenshot;
@@ -203,7 +229,8 @@ QPixmap ScreenGrabber::unixScreenshot(bool& ok)
     }
 
     QString portalError;
-    const PortalStatus status = freeDesktopPortal(screenshot, portalError);
+    const PortalStatus status =
+      freeDesktopPortal(screenshot, portalError, afterCapture);
     ok = status == PortalStatus::Success;
 
     if (status == PortalStatus::Unavailable && !m_info.waylandDetected()) {
@@ -225,6 +252,7 @@ QPixmap ScreenGrabber::unixScreenshot(bool& ok)
 
     return screenshot;
 #else
+    Q_UNUSED(afterCapture)
     ok = false;
     return QPixmap();
 #endif
@@ -321,25 +349,24 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
     return screenshot;
 
 #elif defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    screenshot = unixScreenshot(ok);
+    const bool detectMonitor = m_info.waylandDetected() &&
+                               preSelectedMonitor < 0 &&
+                               ConfigHandler().captureActiveMonitor() &&
+                               QGuiApplication::screens().size() > 1;
+    QPointer<QScreen> pointerScreen;
+    std::function<void()> afterCapture;
+    if (detectMonitor && usesWaylandPlatform()) {
+        // Run only once the portal image exists, so probes cannot enter the
+        // screenshot. Decode the image in parallel with native pointer entry.
+        afterCapture = [&pointerScreen] {
+            pointerScreen = ScreenPointer::waylandScreen();
+        };
+    }
+    screenshot = unixScreenshot(ok, afterCapture);
     if (!ok) {
         return QPixmap();
     }
-#elif defined(Q_OS_WIN)
-    screenshot = windowsScreenshot(wid);
-#endif
-
-#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    // A portal request can overtake pending Wayland unmaps on another
-    // connection. Never map detection windows until the image is captured.
-    if (m_info.waylandDetected() && preSelectedMonitor < 0 &&
-        ConfigHandler().captureActiveMonitor() &&
-        QGuiApplication::screens().size() > 1) {
-        QScreen* pointerScreen = nullptr;
-        if (QGuiApplication::platformName().startsWith(
-              QLatin1String("wayland"))) {
-            pointerScreen = ScreenPointer::waylandScreen();
-        }
+    if (detectMonitor) {
         preSelectedMonitor = QGuiApplication::screens().indexOf(pointerScreen);
         if (preSelectedMonitor < 0) {
             AbstractLogger::warning()
@@ -347,6 +374,8 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
                     "Wayland; showing monitor selection.");
         }
     }
+#elif defined(Q_OS_WIN)
+    screenshot = windowsScreenshot(wid);
 #endif
 
     // If monitor was pre-selected skip UI and crop directly
@@ -437,6 +466,15 @@ QRect ScreenGrabber::desktopGeometry()
         scrRect.moveTo(QPointF(scrRect.x() / dpr, scrRect.y() / dpr).toPoint());
 #endif
         geometry = geometry.united(scrRect);
+    }
+    return geometry;
+}
+
+QRect ScreenGrabber::logicalDesktopGeometry() const
+{
+    QRect geometry;
+    for (QScreen* screen : QGuiApplication::screens()) {
+        geometry = geometry.united(screen->geometry());
     }
     return geometry;
 }
@@ -667,12 +705,9 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
     QScreen* targetScreen = screens[monitorIndex];
     QRect targetGeometry = targetScreen->geometry();
     qreal targetDpr = targetScreen->devicePixelRatio();
+    const QRect desktop = logicalDesktopGeometry();
 
-    if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"))) {
-        QRect desktop;
-        for (QScreen* screen : screens) {
-            desktop = desktop.united(screen->geometry());
-        }
+    if (usesWaylandPlatform()) {
         const auto mapping = PortalImage::mapScreen(
           fullScreenshot.size(), desktop, targetGeometry);
         if (mapping) {
@@ -683,20 +718,10 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
           "using the legacy monitor crop.");
     }
 
-    // Calculate total logical dimensions and minimum coordinates
-    int minX = INT_MAX, minY = INT_MAX;
-    int maxX = INT_MIN, maxY = INT_MIN;
-
-    for (QScreen* screen : screens) {
-        QRect geo = screen->geometry();
-        minX = qMin(minX, geo.x());
-        minY = qMin(minY, geo.y());
-        maxX = qMax(maxX, geo.x() + geo.width());
-        maxY = qMax(maxY, geo.y() + geo.height());
-    }
-
-    int totalLogicalWidth = maxX - minX;
-    int totalLogicalHeight = maxY - minY;
+    const int minX = desktop.x();
+    const int minY = desktop.y();
+    const int totalLogicalWidth = desktop.width();
+    const int totalLogicalHeight = desktop.height();
 
 #ifdef FLAMESHOT_DEBUG_CAPTURE
     qDebug() << tr("Total logical dimensions: %1x%2 (min: %3,%4)")

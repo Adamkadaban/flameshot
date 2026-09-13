@@ -175,8 +175,11 @@ picker. On native Wayland, Flameshot briefly maps transparent, non-focusable
 windows on the outputs and uses a pointer-enter event to identify the monitor
 after capturing the desktop image. Capturing first prevents a portal request
 from racing the removal of those windows and returning a black image.
-It does not query the global cursor through
-XWayland or require a GNOME extension. The windows close after detection, or
+Once the portal has finished capturing, image decoding runs on Qt's thread pool
+while pointer detection runs on the GUI thread. Only `QImage` is decoded in the
+worker; `QPixmap` creation and editing remain on the GUI thread.
+Flameshot does not query the global cursor through XWayland or require a GNOME
+extension. The windows close after detection, or
 after 750 ms; unavailable detection falls back to the monitor picker. Explicit
 selection with `flameshot screen -n 0 --edit` bypasses detection.
 
@@ -184,8 +187,8 @@ The editor uses the selected output even when another output is primary.
 Wayland portal image pixels are retained without resizing them to Qt's screen
 DPR, which may be rounded up on fractionally scaled monitors. Image coordinates,
 annotations, pinned images, and the magnifier use the screenshot's own pixel
-scale. The portal still determines the available image detail and the resolution of a mixed-DPI
-desktop; Flameshot cannot recover detail missing from the portal image.
+scale. The portal still determines the available image detail and the resolution
+of a mixed-DPI desktop; Flameshot cannot recover detail missing from the portal image.
 The `screen --region` rectangle is in screenshot pixels, like the GUI's initial
 region.
 
@@ -205,6 +208,29 @@ QT_QPA_PLATFORM=wayland <build-directory>/tests/wayland_capture_integration \
 It shows a reference pattern for at most five seconds, saves the actual capture,
 and fails if the expected colors are missing (including an all-black capture).
 It is deliberately excluded from unattended `ctest` runs.
+
+### Reusing the background capture service on Linux
+
+For repeated captures, a desktop shortcut can call Flameshot's existing D-Bus
+method instead of starting a new Qt process every time:
+
+```shell
+dbus-send --session --type=method_call --dest=org.flameshot.Flameshot \
+    / org.flameshot.Flameshot.captureScreen
+```
+
+This uses the normal Flameshot background instance and its installed D-Bus
+activation entry. For a custom installation, ensure
+`org.flameshot.Flameshot.service` points to the intended executable. On native
+Wayland that process must run with `QT_QPA_PLATFORM=wayland`.
+The first request may start the process; subsequent requests reuse it.
+The service does not continuously capture or reuse stale screenshot images.
+Repeated requests while a capture is opening are rejected rather than starting
+overlapping editors.
+
+The compositor's screenshot/PNG generation still determines much of the latency,
+especially with large, mixed-DPI desktops. Reusing the process and overlapping
+client-side work do not remove that cost.
 
 ### Usage on minimal X11 window managers
 

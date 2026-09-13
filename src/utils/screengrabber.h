@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QPixmap>
 #include <QScreen>
+#include <functional>
 
 class QEventLoop;
 class QWidget;
@@ -30,9 +31,14 @@ public:
     QPixmap grabFullDesktop(bool& ok);
     QRect screenGeometry(QScreen* screen);
     QPixmap grabScreen(QScreen* screenNumber, bool& ok);
-    PortalStatus freeDesktopPortal(QPixmap& res, QString& errorDetail);
+    // afterCapture runs on the GUI thread once capture completes, alongside
+    // decoding.
+    PortalStatus freeDesktopPortal(
+      QPixmap& res,
+      QString& errorDetail,
+      const std::function<void()>& afterCapture = {});
     QRect desktopGeometry();
-    QRect logicalDesktopGeometry();
+    QRect logicalDesktopGeometry() const;
     int getSelectedMonitor() const { return m_selectedMonitor; }
     QScreen* getSelectedScreen() const;
     QPixmap selectMonitorAndCrop(const QPixmap& fullScreenshot, bool& ok);
@@ -52,7 +58,8 @@ private:
     QPixmap cropToMonitor(const QPixmap& fullScreenshot, int monitorIndex);
     QPixmap windowsScreenshot(int wid);
     QPixmap x11LegacyScreenshot();
-    QPixmap unixScreenshot(bool& ok);
+    QPixmap unixScreenshot(bool& ok,
+                           const std::function<void()>& afterCapture = {});
 
     DesktopInfo m_info;
     QPixmap Screenshot;
