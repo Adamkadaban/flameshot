@@ -16,11 +16,13 @@ MagnifierWidget::MagnifierWidget(const QPixmap& p,
                                  bool isSquare,
                                  QWidget* parent)
   : QWidget(parent)
+  , m_devicePixelRatio(p.devicePixelRatio())
+  , m_square(isSquare)
   , m_color(c)
   , m_borderColor(c)
   , m_screenshot(p)
-  , m_square(isSquare)
 {
+    m_screenshot.setDevicePixelRatio(1);
     setFixedSize(parent->width(), parent->height());
     setAttribute(Qt::WA_TransparentForMouseEvents);
     m_color.setAlpha(130);
@@ -30,7 +32,7 @@ MagnifierWidget::MagnifierWidget(const QPixmap& p,
                   QImage::Format_ARGB32);
     padded.fill(Qt::black);
     QPainter painter(&padded);
-    painter.drawPixmap(m_magPixels, m_magPixels, p);
+    painter.drawPixmap(m_magPixels, m_magPixels, m_screenshot);
     m_paddedScreenshot.convertFromImage(padded);
 }
 void MagnifierWidget::paintEvent(QPaintEvent*)
@@ -50,11 +52,11 @@ void MagnifierWidget::drawMagnifierCircle(QPainter& painter)
 {
     auto relativeCursor = QCursor::pos();
     auto translated = QWidget::mapFromGlobal(relativeCursor);
-    auto x = translated.x() + m_magPixels;
-    auto y = translated.y() + m_magPixels;
+    auto x = translated.x();
+    auto y = translated.y();
 
-    int magX = static_cast<int>(x * m_devicePixelRatio - m_magPixels);
-    int magY = static_cast<int>(y * m_devicePixelRatio - m_magPixels);
+    int magX = qRound(x * m_devicePixelRatio);
+    int magY = qRound(y * m_devicePixelRatio);
     QRectF magniRect(magX, magY, m_pixels, m_pixels);
 
     qreal drawPosX = x + m_magOffset + m_pixels * magZoom / 2;
@@ -111,7 +113,7 @@ void MagnifierWidget::drawMagnifier(QPainter& painter)
     auto x = translated.x();
     auto y = translated.y();
 
-    int magX = static_cast<int>(x * m_devicePixelRatio - m_magPixels);
+    int magX = qRound(x * m_devicePixelRatio) - m_magPixels;
     int offsetX = 0;
     if (magX < 0) {
         offsetX = magX;
@@ -123,7 +125,7 @@ void MagnifierWidget::drawMagnifier(QPainter& painter)
             magX = maxX;
         }
     }
-    int magY = static_cast<int>(y * m_devicePixelRatio - m_magPixels);
+    int magY = qRound(y * m_devicePixelRatio) - m_magPixels;
     int offsetY = 0;
     if (magY < 0) {
         offsetY = magY;

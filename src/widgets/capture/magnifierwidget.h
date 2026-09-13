@@ -21,7 +21,7 @@ private:
     const int m_magOffset = 16;
     const int magZoom = 10;
     const int m_pixels = 2 * m_magPixels + 1;
-    const int m_devicePixelRatio = 1;
+    const qreal m_devicePixelRatio;
     bool m_square;
     QColor m_color;
     QColor m_borderColor;

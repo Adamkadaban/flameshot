@@ -4,6 +4,8 @@
 #include "utils/abstractlogger.h"
 #include "utils/confighandler.h"
 #include "utils/monitorpreview.h"
+#include "utils/portalimage.h"
+#include "utils/screenpointer.h"
 #include "utils/systemnotification.h"
 
 #include <QApplication>
@@ -16,6 +18,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
+#include <QPointer>
 #include <QProcess>
 #include <QScreen>
 #include <QTimer>
@@ -241,19 +244,12 @@ QPixmap ScreenGrabber::selectMonitorAndCrop(const QPixmap& fullScreenshot,
     // If there's only one monitor, skip selection
     const QList<QScreen*> screens = QGuiApplication::screens();
     if (screens.size() == 1) {
+        m_selectedMonitor = 0;
         return cropToMonitor(fullScreenshot, 0);
     }
 
     // Capture Active Monitor: auto-select monitor under cursor
-    if (ConfigHandler().captureActiveMonitor()) {
-        if (m_info.waylandDetected()) {
-            AbstractLogger::error()
-              << tr("Capture Active Monitor is not supported on Wayland due to "
-                    "Wayland security model.");
-            ok = false;
-            return QPixmap();
-        }
-
+    if (ConfigHandler().captureActiveMonitor() && !m_info.waylandDetected()) {
         QGuiAppCurrentScreen screenFinder;
         QScreen* cursorScreen = screenFinder.currentScreen();
         int monitorIndex = screens.indexOf(cursorScreen);
@@ -305,6 +301,25 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
     ok = true;
     int wid = 0;
     QPixmap screenshot;
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    QPointer<QScreen> pointerScreen;
+
+    if (m_info.waylandDetected() && preSelectedMonitor < 0 &&
+        ConfigHandler().captureActiveMonitor() &&
+        QGuiApplication::screens().size() > 1) {
+        if (QGuiApplication::platformName().startsWith(
+              QLatin1String("wayland"))) {
+            pointerScreen = ScreenPointer::waylandScreen();
+        }
+        preSelectedMonitor = QGuiApplication::screens().indexOf(pointerScreen);
+        if (preSelectedMonitor < 0) {
+            AbstractLogger::warning()
+              << tr("Could not determine the monitor under the pointer on "
+                    "Wayland; showing monitor selection.");
+        }
+    }
+    const bool hadPointerScreen = !pointerScreen.isNull();
+#endif
 
 #if defined(Q_OS_MACOS)
     QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
@@ -332,6 +347,17 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
     }
 #elif defined(Q_OS_WIN)
     screenshot = windowsScreenshot(wid);
+#endif
+
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+    if (hadPointerScreen) {
+        preSelectedMonitor = QGuiApplication::screens().indexOf(pointerScreen);
+        if (preSelectedMonitor < 0) {
+            AbstractLogger::warning()
+              << tr("The selected monitor was disconnected; showing monitor "
+                    "selection.");
+        }
+    }
 #endif
 
     // If monitor was pre-selected skip UI and crop directly
@@ -643,13 +669,30 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
                                      int monitorIndex)
 {
     const QList<QScreen*> screens = QGuiApplication::screens();
-    if (monitorIndex >= screens.size()) {
+    if (monitorIndex < 0 || monitorIndex >= screens.size()) {
+        AbstractLogger::warning()
+          << tr("Requested monitor is no longer available");
         return fullScreenshot;
     }
 
     QScreen* targetScreen = screens[monitorIndex];
     QRect targetGeometry = targetScreen->geometry();
     qreal targetDpr = targetScreen->devicePixelRatio();
+
+    if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"))) {
+        QRect desktop;
+        for (QScreen* screen : screens) {
+            desktop = desktop.united(screen->geometry());
+        }
+        const auto mapping = PortalImage::mapScreen(
+          fullScreenshot.size(), desktop, targetGeometry);
+        if (mapping) {
+            return PortalImage::crop(fullScreenshot, *mapping);
+        }
+        AbstractLogger::warning() << tr(
+          "Screenshot dimensions do not match the Wayland desktop layout; "
+          "using the legacy monitor crop.");
+    }
 
     // Calculate total logical dimensions and minimum coordinates
     int minX = INT_MAX, minY = INT_MAX;

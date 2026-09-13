@@ -14,6 +14,8 @@ target_sources(
   PRIVATE abstractlogger.cpp
           filenamehandler.cpp
           screengrabber.cpp
+          portalimage.cpp
+          screenpointer.cpp
           monitorpreview.cpp
           confighandler.cpp
           systemnotification.cpp

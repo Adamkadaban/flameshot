@@ -227,9 +227,13 @@ void Flameshot::screen(CaptureRequest req, const int screenNumber)
         if (region.isNull()) {
             region = geometry;
         } else {
-            QRect screenGeom = geometry;
-            screenGeom.moveTopLeft({ 0, 0 });
-            region = region.intersected(screenGeom);
+            region = region.intersected(p.rect());
+            if (region.isEmpty()) {
+                AbstractLogger::error()
+                  << tr("Requested region does not intersect the screenshot");
+                emit captureFailed();
+                return;
+            }
             p = p.copy(region);
         }
         if (req.tasks() & CaptureRequest::PIN) {

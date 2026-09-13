@@ -168,6 +168,29 @@ If you require console output, run `flameshot-cli.exe` instead. `flameshot-cli.e
 
 Please [refer to this document](docs/UsageHyprlandSwayWlroots.md) for detailed instructions on how to set up Flameshot on Hyprland, Sway, and wlroots-based Wayland compositors.
 
+### Native Wayland capture and fractional scaling
+
+Enable **Capture monitor under pointer** in General settings to skip the monitor
+picker. On native Wayland, Flameshot briefly maps transparent, non-focusable
+windows on the outputs and uses a pointer-enter event to identify the monitor
+before requesting a screenshot. It does not query the global cursor through
+XWayland or require a GNOME extension. The windows close after detection, or
+after 750 ms; unavailable detection falls back to the monitor picker. Explicit
+selection with `flameshot screen -n 0 --edit` bypasses detection.
+
+The editor uses the selected output even when another output is primary.
+Wayland portal image pixels are retained without resizing them to Qt's screen
+DPR, which may be rounded up on fractionally scaled monitors. Image coordinates,
+annotations, pinned images, and the magnifier use the screenshot's own pixel
+scale. The portal still determines the available image detail and the resolution of a mixed-DPI
+desktop; Flameshot cannot recover detail missing from the portal image.
+The `screen --region` rectangle is in screenshot pixels, like the GUI's initial
+region.
+
+Build regression tests with `-DBUILD_TESTING=ON`, then run
+`ctest --test-dir <build-directory> --output-on-failure`. Image mapping and pixel
+preservation tests run offscreen and do not open desktop windows.
+
 ### Usage on minimal X11 window managers
 
 On minimal X11 window managers (i3, dwm, xmonad, bspwm, ...), capturing may fail because no portal backend implements the Screenshot interface (errors such as *"Could not locate the org.freedesktop.portal.Desktop service"* or *"Screenshot portal timed out"*). Please [refer to this document](docs/UsageX11MinimalWM.md) for the fix (enabling the legacy X11 capture).

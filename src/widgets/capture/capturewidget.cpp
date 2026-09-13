@@ -16,6 +16,7 @@
 #include "core/qguiappcurrentscreen.h"
 #include "tools/copy/copytool.h"
 #include "utils/abstractlogger.h"
+#include "utils/portalimage.h"
 #include "utils/screengrabber.h"
 #include "utils/screenshotsaver.h"
 #include "widgets/capture/colorpicker.h"
@@ -194,12 +195,9 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
             selectedScreen = QGuiApplication::primaryScreen();
         }
         QRect screenGeom = selectedScreen->geometry();
+        setScreen(selectedScreen);
         move(screenGeom.topLeft());
         resize(screenGeom.size());
-
-        if (selectedScreen != nullptr && windowHandle()) {
-            windowHandle()->setScreen(selectedScreen);
-        }
 #endif
     }
 
@@ -2050,11 +2048,7 @@ QRect CaptureWidget::extendedSelection() const
 
 QRect CaptureWidget::extendedRect(const QRect& r) const
 {
-    auto devicePixelRatio = m_context.screenshot.devicePixelRatio();
-    return { static_cast<int>(r.left() * devicePixelRatio),
-             static_cast<int>(r.top() * devicePixelRatio),
-             static_cast<int>(r.width() * devicePixelRatio),
-             static_cast<int>(r.height() * devicePixelRatio) };
+    return PortalImage::toPixels(r, m_context.screenshot.devicePixelRatio());
 }
 
 QRect CaptureWidget::paddedUpdateRect(const QRect& r) const

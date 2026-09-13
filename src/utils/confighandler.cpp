@@ -145,7 +145,7 @@ static QMap<class QString, QSharedPointer<ValueHandler>>
 #endif
 #if !defined(Q_OS_MACOS)
     // Auto-select the monitor under the cursor instead of showing
-    // the monitor selection UI. Not supported on Wayland.
+    // the monitor selection UI.
     OPTION("captureActiveMonitor"         ,Bool               ( false         )),
 #endif
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)

@@ -151,6 +151,12 @@ endif()
 
 add_subdirectory(src)
 
+option(BUILD_TESTING "Build automated capture tests" OFF)
+include(CTest)
+if(BUILD_TESTING)
+  add_subdirectory(tests)
+endif()
+
 # CPack
 set(CPACK_PACKAGE_VENDOR "flameshot-org")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Powerful yet simple to use screenshot software.")

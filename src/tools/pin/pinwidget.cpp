@@ -59,11 +59,8 @@ PinWidget::PinWidget(const QPixmap& pixmap,
     new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q), this, SLOT(close()));
     new QShortcut(Qt::Key_Escape, this, SLOT(close()));
 
-    qreal devicePixelRatio = 1;
+    const qreal devicePixelRatio = pixmap.devicePixelRatio();
     QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
-    if (currentScreen != nullptr) {
-        devicePixelRatio = currentScreen->devicePixelRatio();
-    }
 
     const int margin =
       static_cast<int>(static_cast<double>(MARGIN) * devicePixelRatio);

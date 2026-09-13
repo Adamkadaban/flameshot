@@ -940,12 +940,12 @@ void GeneralConf::setInsecurePixelate(bool checked)
 void GeneralConf::initCaptureActiveMonitor()
 {
     m_captureActiveMonitor = new QCheckBox(
-      tr("Capture active monitor in X11 and Windows (skip monitor selection)"),
-      this);
+      tr("Capture monitor under pointer (skip monitor selection)"), this);
     m_captureActiveMonitor->setToolTip(
       tr("Automatically capture the monitor where the cursor is located "
          "instead of showing the monitor selection dialog. "
-         "This feature is not supported on macOS and Wayland."));
+         "On Wayland, briefly use transparent windows to detect the pointer. "
+         "If detection is unavailable, show the monitor selection dialog."));
     m_scrollAreaLayout->addWidget(m_captureActiveMonitor);
 
     connect(m_captureActiveMonitor,
