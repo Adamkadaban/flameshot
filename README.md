@@ -215,9 +215,17 @@ For repeated captures, a desktop shortcut can call Flameshot's existing D-Bus
 method instead of starting a new Qt process every time:
 
 ```shell
+gdbus call --session --dest org.freedesktop.DBus \
+    --object-path /org/freedesktop/DBus \
+    --method org.freedesktop.DBus.StartServiceByName \
+    org.flameshot.Flameshot 0 >/dev/null &&
 dbus-send --session --type=method_call --dest=org.flameshot.Flameshot \
     / org.flameshot.Flameshot.captureScreen
 ```
+
+Put both commands in the shortcut's script. Wait for activation before the
+fire-and-forget capture request; otherwise a cold-start request can be lost when
+its sender exits before the service is ready.
 
 This uses the normal Flameshot background instance and its installed D-Bus
 activation entry. For a custom installation, ensure
