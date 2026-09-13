@@ -173,7 +173,9 @@ Please [refer to this document](docs/UsageHyprlandSwayWlroots.md) for detailed i
 Enable **Capture monitor under pointer** in General settings to skip the monitor
 picker. On native Wayland, Flameshot briefly maps transparent, non-focusable
 windows on the outputs and uses a pointer-enter event to identify the monitor
-before requesting a screenshot. It does not query the global cursor through
+after capturing the desktop image. Capturing first prevents a portal request
+from racing the removal of those windows and returning a black image.
+It does not query the global cursor through
 XWayland or require a GNOME extension. The windows close after detection, or
 after 750 ms; unavailable detection falls back to the monitor picker. Explicit
 selection with `flameshot screen -n 0 --edit` bypasses detection.
@@ -190,6 +192,19 @@ region.
 Build regression tests with `-DBUILD_TESTING=ON`, then run
 `ctest --test-dir <build-directory> --output-on-failure`. Image mapping and pixel
 preservation tests run offscreen and do not open desktop windows.
+
+An additional opt-in check exercises automatic capture against the **real**
+Wayland compositor and portal, rather than a replayed image. With **Capture
+monitor under pointer** enabled and portal access approved, run:
+
+```shell
+QT_QPA_PLATFORM=wayland <build-directory>/tests/wayland_capture_integration \
+    <build-directory>/src/flameshot /tmp/flameshot-wayland-check.png
+```
+
+It shows a reference pattern for at most five seconds, saves the actual capture,
+and fails if the expected colors are missing (including an all-black capture).
+It is deliberately excluded from unattended `ctest` runs.
 
 ### Usage on minimal X11 window managers
 

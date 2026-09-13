@@ -16,3 +16,9 @@ endfunction()
 add_capture_test(portalimage ../src/utils/portalimage.cpp)
 add_capture_test(screenpointer ../src/utils/screenpointer.cpp)
 add_capture_test(magnifier ../src/widgets/capture/magnifierwidget.cpp)
+
+# Opt-in: this check briefly covers the real desktop and uses its screenshot portal.
+add_executable(wayland_capture_integration wayland_capture_integration.cpp)
+target_link_libraries(wayland_capture_integration PRIVATE
+    project_options Qt6::Widgets
+)

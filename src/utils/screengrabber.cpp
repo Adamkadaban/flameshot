@@ -18,7 +18,6 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
-#include <QPointer>
 #include <QProcess>
 #include <QScreen>
 #include <QTimer>
@@ -301,25 +300,6 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
     ok = true;
     int wid = 0;
     QPixmap screenshot;
-#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    QPointer<QScreen> pointerScreen;
-
-    if (m_info.waylandDetected() && preSelectedMonitor < 0 &&
-        ConfigHandler().captureActiveMonitor() &&
-        QGuiApplication::screens().size() > 1) {
-        if (QGuiApplication::platformName().startsWith(
-              QLatin1String("wayland"))) {
-            pointerScreen = ScreenPointer::waylandScreen();
-        }
-        preSelectedMonitor = QGuiApplication::screens().indexOf(pointerScreen);
-        if (preSelectedMonitor < 0) {
-            AbstractLogger::warning()
-              << tr("Could not determine the monitor under the pointer on "
-                    "Wayland; showing monitor selection.");
-        }
-    }
-    const bool hadPointerScreen = !pointerScreen.isNull();
-#endif
 
 #if defined(Q_OS_MACOS)
     QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
@@ -350,12 +330,21 @@ QPixmap ScreenGrabber::grabEntireDesktop(bool& ok, int preSelectedMonitor)
 #endif
 
 #if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
-    if (hadPointerScreen) {
+    // A portal request can overtake pending Wayland unmaps on another
+    // connection. Never map detection windows until the image is captured.
+    if (m_info.waylandDetected() && preSelectedMonitor < 0 &&
+        ConfigHandler().captureActiveMonitor() &&
+        QGuiApplication::screens().size() > 1) {
+        QScreen* pointerScreen = nullptr;
+        if (QGuiApplication::platformName().startsWith(
+              QLatin1String("wayland"))) {
+            pointerScreen = ScreenPointer::waylandScreen();
+        }
         preSelectedMonitor = QGuiApplication::screens().indexOf(pointerScreen);
         if (preSelectedMonitor < 0) {
             AbstractLogger::warning()
-              << tr("The selected monitor was disconnected; showing monitor "
-                    "selection.");
+              << tr("Could not determine the monitor under the pointer on "
+                    "Wayland; showing monitor selection.");
         }
     }
 #endif
